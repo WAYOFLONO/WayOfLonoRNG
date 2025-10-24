@@ -1,0 +1,58 @@
+## Visual Studio / .NET
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio 2019 cache/options
+.vs/
+
+# Rider
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# Mac
+.DS_Store
+
+# ReSharper
+_ReSharper*/
+*.[Rr]esharper
+
+# Dotnet publish / script outputs
+publish/
+dist/
+release_stage/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Miscellaneous
+*.log
+*.pdb
+*.opendb
+*.sdf
+*.cache
+*.aps
+*.bak
+*.ncb
+*.opensdf
+*.tlog
+*.vshost.*
+*.vspscc
+*.vssscc
+*.buildscc
+*.pidb
+*.booproj
+*.csproj.user
+*.userprefs
