@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Reflection;
@@ -13,26 +12,49 @@ namespace RandomChipRNG
         private int _min = 0, _max = 100;
         private string _value = "88";
 
-        // Drag + click detection (robust)
+        // Drag + click detection. Positions are tracked in screen coordinates:
+        // the window follows the cursor while dragging, so client coordinates
+        // barely change and can't be used to tell a drag from a click.
+        private bool _mouseDown = false;
         private bool _dragging = false;
-        private Point _dragOffset;
-        private Stopwatch _downTimer = new Stopwatch();
+        private Point _downScreenPos;
+        private Point _downFormPos;
         private const int ClickMoveThreshold = 6;
-        private const int ClickTimeThresholdMs = 250;
 
         private ContextMenuStrip? _menu;
+        private readonly Dictionary<ChipSize, ToolStripMenuItem> _sizeItems = new();
+
+        // Segoe UI / Consolas ship with Windows but are often missing elsewhere
+        // (e.g. under Wine), so fall back to whatever is installed.
+        private static readonly FontFamily NumberFontFamily = PickFont("Segoe UI", "Arial", "Liberation Sans", "DejaVu Sans");
+        private static readonly FontFamily BrandFontFamily  = PickFont("Consolas", "Courier New", "Liberation Mono", "DejaVu Sans Mono");
+
+        private static FontFamily PickFont(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var match = FontFamily.Families.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (match != null) return match;
+            }
+            return FontFamily.GenericSansSerif;
+        }
 
         private enum ChipSize { Small, Medium, Large }
         private ChipSize _size = ChipSize.Small; // default small
 
         public MainForm()
         {
-            // Load the icon from embedded resources for a true single-file app.
+            // Window/taskbar icon. Ask for the largest frame: WinForms derives the
+            // small title-bar icon from the same data, and docks (incl. Linux docks
+            // under Wine) otherwise upscale a blurry 32px image.
             try
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 using var stream = assembly.GetManifestResourceStream("RandomChipRNG.icon.ico");
-                if (stream != null) this.Icon = new Icon(stream);
+                if (stream != null)
+                    Icon = new Icon(stream, 256, 256);
+                else if (Environment.ProcessPath is string exe)
+                    Icon = Icon.ExtractAssociatedIcon(exe);
             }
             catch { /* Failed to load icon, proceed without it. */ }
 
@@ -73,15 +95,19 @@ namespace RandomChipRNG
                     Roll(); Invalidate();
                 }
             });
-            _menu.Items.Add("Copy Number", null, (_, __) => Clipboard.SetText(_value));
+            _menu.Items.Add("Copy Number", null, (_, __) =>
+            {
+                // The clipboard can be locked by another process; don't crash over it.
+                try { Clipboard.SetText(_value); }
+                catch (System.Runtime.InteropServices.ExternalException) { }
+            });
             _menu.Items.Add(new ToolStripSeparator());
 
             var sizeMenu = new ToolStripMenuItem("Size");
-            sizeMenu.DropDownItems.AddRange(new ToolStripItem[] {
-                new ToolStripMenuItem("Small (180px)",  null, (_, __) => SetSize(ChipSize.Small)),
-                new ToolStripMenuItem("Medium (220px)", null, (_, __) => SetSize(ChipSize.Medium)),
-                new ToolStripMenuItem("Large (260px)",  null, (_, __) => SetSize(ChipSize.Large)),
-            });
+            _sizeItems[ChipSize.Small]  = new ToolStripMenuItem("Small (180px)",  null, (_, __) => SetSize(ChipSize.Small));
+            _sizeItems[ChipSize.Medium] = new ToolStripMenuItem("Medium (220px)", null, (_, __) => SetSize(ChipSize.Medium));
+            _sizeItems[ChipSize.Large]  = new ToolStripMenuItem("Large (260px)",  null, (_, __) => SetSize(ChipSize.Large));
+            sizeMenu.DropDownItems.AddRange(_sizeItems.Values.ToArray());
             _menu.Items.Add(sizeMenu);
 
             _menu.Items.Add(new ToolStripSeparator());
@@ -101,6 +127,7 @@ namespace RandomChipRNG
             var center = new Point(Location.X + Width/2, Location.Y + Height/2);
             ApplySizeDimensions();
             Location = new Point(center.X - Width/2, center.Y - Height/2);
+            KeepOnScreen();
             UpdateCircularRegion();
             UpdateSizeChecks();
             Invalidate();
@@ -108,22 +135,18 @@ namespace RandomChipRNG
 
         private void UpdateSizeChecks()
         {
-            if (_menu == null) return;
-            foreach (ToolStripItem item in _menu.Items)
-            {
-                if (item is ToolStripMenuItem mi && mi.Text == "Size")
-                {
-                    foreach (ToolStripItem sub in mi.DropDownItems)
-                    {
-                        if (sub is ToolStripMenuItem si)
-                        {
-                            si.Checked = (si.Text.StartsWith("Small")  && _size == ChipSize.Small)
-                                      || (si.Text.StartsWith("Medium") && _size == ChipSize.Medium)
-                                      || (si.Text.StartsWith("Large")  && _size == ChipSize.Large);
-                        }
-                    }
-                }
-            }
+            foreach (var (size, item) in _sizeItems)
+                item.Checked = size == _size;
+        }
+
+        // Pull the chip back inside the working area of whichever screen it's on
+        // (e.g. after growing it near an edge, or dropping it partly off-screen).
+        private void KeepOnScreen()
+        {
+            var wa = Screen.FromRectangle(Bounds).WorkingArea;
+            int x = Math.Max(wa.Left, Math.Min(Left, wa.Right - Width));
+            int y = Math.Max(wa.Top, Math.Min(Top, wa.Bottom - Height));
+            Location = new Point(x, y);
         }
 
         protected override void OnResize(EventArgs e)
@@ -140,7 +163,9 @@ namespace RandomChipRNG
             var circleRect = new Rectangle((Width - s)/2, (Height - s)/2, s, s);
             using var gp = new GraphicsPath();
             gp.AddEllipse(circleRect);
+            var old = Region;
             Region = new Region(gp);
+            old?.Dispose();
         }
 
         // --- Drawing helpers ---
@@ -170,15 +195,16 @@ namespace RandomChipRNG
             g.FillPath(brush, gp);
         }
 
-        // --- Mouse handlers (robust drag + click) ---
+        // --- Mouse handlers (drag to move, click to roll) ---
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
             if (e.Button == MouseButtons.Left)
             {
-                _dragging = true;
-                _dragOffset = new Point(e.X, e.Y);
-                _downTimer.Restart();
+                _mouseDown = true;
+                _dragging = false;
+                _downScreenPos = MousePosition;
+                _downFormPos = Location;
                 Capture = true;
             }
         }
@@ -186,31 +212,41 @@ namespace RandomChipRNG
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            if (_dragging)
-            {
-                // If the mouse has moved beyond the threshold, it's definitely a drag, not a click.
-                if (Math.Abs(e.X - _dragOffset.X) > ClickMoveThreshold || Math.Abs(e.Y - _dragOffset.Y) > ClickMoveThreshold)
-                {
-                    _downTimer.Stop(); // Stop the timer to indicate it's not a click
-                }
+            if (!_mouseDown) return;
 
-                var screen = MousePosition;
-                Location = new Point(screen.X - _dragOffset.X, screen.Y - _dragOffset.Y);
-            }
+            var screen = MousePosition;
+            int dx = screen.X - _downScreenPos.X;
+            int dy = screen.Y - _downScreenPos.Y;
+
+            // Don't move until the cursor has clearly left the click zone, so a
+            // plain click doesn't jitter the chip around.
+            if (!_dragging && (Math.Abs(dx) > ClickMoveThreshold || Math.Abs(dy) > ClickMoveThreshold))
+                _dragging = true;
+
+            if (_dragging)
+                Location = new Point(_downFormPos.X + dx, _downFormPos.Y + dy);
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
-            if (e.Button == MouseButtons.Left)
+            if (e.Button == MouseButtons.Left && _mouseDown)
             {
+                bool wasDrag = _dragging;
+                _mouseDown = false;
                 _dragging = false;
                 Capture = false;
 
-                // A click is when the mouse is released quickly and hasn't moved far.
-                bool isClick = _downTimer.IsRunning && _downTimer.ElapsedMilliseconds <= ClickTimeThresholdMs;
-                if (isClick) { Roll(); Invalidate(); }
+                if (wasDrag) KeepOnScreen();
+                else { Roll(); Invalidate(); }
             }
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            // Capture lost mid-drag (alt-tab, context menu, etc.): cancel cleanly.
+            if (!Capture) { _mouseDown = false; _dragging = false; }
         }
 
         private void Roll()
@@ -271,17 +307,45 @@ namespace RandomChipRNG
             // Inner ring
             FillDonut(g, center, ringOuterRadius, ringInnerRadius, brushRed);
 
-            // Number & brand
-            using var numberFont = new Font("Segoe UI", _size == ChipSize.Small ? 34 : _size == ChipSize.Medium ? 40 : 46, FontStyle.Bold);
-            var numSize = g.MeasureString(_value, numberFont);
-            float numberY = center.Y - numSize.Height * 0.62f;
-            g.DrawString(_value, numberFont, brushRed, center.X - numSize.Width / 2f, numberY);
+            // Number & brand. Sizes are in pixels (not points) so the text scales
+            // with the chip rather than with the Windows DPI setting, and the number
+            // shrinks to fit inside the inner ring (e.g. "-100000").
+            float innerDiameter = ringInnerRadius * 2f;
+            float maxTextWidth = innerDiameter * 0.86f;
+
+            using var fmt = new StringFormat(StringFormat.GenericTypographic)
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center,
+                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
+            };
+
+            float numberPx = R * 0.5f;
+            SizeF numSize;
+            Font numberFont;
+            while (true)
+            {
+                numberFont = new Font(NumberFontFamily, numberPx, FontStyle.Bold, GraphicsUnit.Pixel);
+                numSize = g.MeasureString(_value, numberFont, PointF.Empty, fmt);
+                if (numSize.Width <= maxTextWidth || numberPx <= 8f) break;
+                numberFont.Dispose();
+                numberPx = Math.Max(8f, numberPx * maxTextWidth / numSize.Width * 0.98f);
+            }
 
             const string brand = "WAYOFLONO";
-            using var brandFont = new Font("Consolas", _size == ChipSize.Small ? 11 : _size == ChipSize.Medium ? 13 : 14, FontStyle.Bold);
-            var brandSize = g.MeasureString(brand, brandFont);
-            float brandY = numberY + numSize.Height - brandSize.Height * 0.2f;
-            g.DrawString(brand, brandFont, brushRed, center.X - brandSize.Width / 2f, brandY);
+            using var brandFont = new Font(BrandFontFamily, R * 0.16f, FontStyle.Bold, GraphicsUnit.Pixel);
+            var brandSize = g.MeasureString(brand, brandFont, PointF.Empty, fmt);
+            if (brandSize.Width > maxTextWidth) brandSize = SizeF.Empty; // doesn't fit: skip it
+
+            using (numberFont)
+            {
+                float gapPx = R * 0.04f;
+                float blockH = numSize.Height + (brandSize.IsEmpty ? 0 : gapPx + brandSize.Height);
+                float top = center.Y - blockH / 2f;
+                g.DrawString(_value, numberFont, brushRed, new PointF(center.X, top + numSize.Height / 2f), fmt);
+                if (!brandSize.IsEmpty)
+                    g.DrawString(brand, brandFont, brushRed, new PointF(center.X, top + numSize.Height + gapPx + brandSize.Height / 2f), fmt);
+            }
         }
     }
 }

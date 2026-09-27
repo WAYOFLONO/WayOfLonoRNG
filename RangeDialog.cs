@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace RandomChipRNG
@@ -15,13 +16,17 @@ namespace RandomChipRNG
 
         public RangeDialog(int min, int max)
         {
+            // Layout below is in 96-DPI pixels; let WinForms scale it on high-DPI displays.
+            AutoScaleDimensions = new SizeF(96F, 96F);
+            AutoScaleMode = AutoScaleMode.Dpi;
+
             Text = "Set Range";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false;
             MinimizeBox = false;
-            Width = 260;
-            Height = 160;
+            ShowInTaskbar = false;
+            ClientSize = new Size(244, 116);
 
             var lbl1 = new Label { Text = "Min:", Left = 12, Top = 15, Width = 50 };
             var lbl2 = new Label { Text = "Max:", Left = 12, Top = 45, Width = 50 };

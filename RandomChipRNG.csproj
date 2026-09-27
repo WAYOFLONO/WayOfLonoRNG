@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -7,10 +7,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>WayOfLonoRNG</AssemblyName>
     <RootNamespace>RandomChipRNG</RootNamespace>
+    <!-- Embeds the icon as a Win32 resource in the .exe itself. Explorer, the
+         taskbar and Wine (for the Linux dock) read it from here; without it
+         the window shows a generic blank icon. -->
+    <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="icon.ico" />
+    <EmbeddedResource Include="icon.ico" LogicalName="RandomChipRNG.icon.ico" />
   </ItemGroup>
 
 </Project>

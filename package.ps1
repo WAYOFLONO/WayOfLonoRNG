@@ -3,7 +3,7 @@ Param(
 )
 
 $publishDir = Join-Path $PSScriptRoot "dist\WayOfLono-RNG_v3"
-$zipOut = Join-Path $PSScriptRoot "WayOfLonoRNG_$Version_Win64.zip"
+$zipOut = Join-Path $PSScriptRoot "WayOfLonoRNG_${Version}_Win64.zip"
 
 # Publish standalone single-file EXE
 dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true -o $publishDir
